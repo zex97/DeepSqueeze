@@ -11,7 +11,7 @@ from deep_squeeze.train_loop import train
 from deep_squeeze.mixture_of_experts import MoE
 from deep_squeeze.materialization import materialize, materialize_with_post_binning, \
     materialize_moe
-from deep_squeeze.disk_storing import store_on_disk
+from deep_squeeze.disk_storing import store_on_disk, calculate_compression_ratio
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s | %(asctime)s | %(message)s',
                     datefmt='%m/%d/%Y %I:%M:%S')
@@ -23,13 +23,13 @@ if __name__ == '__main__':
 
     # Set experiment parameters
     params = {
-        "data_path": "storage/datasets/berkeley_processed.csv",
+        "data_path": "data/corel_processed.csv",
         "epochs": 1,
         "batch_size": 128,
         "lr": 1e-4,
         "error_threshold": 0.005,
         "code_size": 1,
-        "compression_path": f"storage/compressed/BERKELEY_MOE_MSE_{today}/",
+        "compression_path": f"data/compressed_{today}/",
         "post_binning": True,
         "experts_numb": 3
     }
@@ -78,4 +78,8 @@ if __name__ == '__main__':
     #     codes, failures = materialize(model, quantized, device)
     codes, failures = materialize_moe(model, quantized, device, params['error_threshold'])
     # # Store the final file on disk
-    store_on_disk(params['compression_path'], model, codes, failures, scaler, params)
+    comp_path = store_on_disk(params['compression_path'], model, codes, failures, scaler, params)
+
+    # Log the final compression ratio DeepSqueeze achieved
+    comp_ratio, comp_size, orig_size = calculate_compression_ratio(params['data_path'], comp_path)
+    logging.info(f"Compression ratio: {(comp_ratio * 100):.2f}% ({comp_size * 1e-6:.2f}MB / {orig_size * 1e-6:.2f}MB)")
