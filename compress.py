@@ -66,7 +66,7 @@ def compression_pipeline(params):
     # Train the autoencoder
     logging.debug("Training...")
     model, loss = train(ae, device, sample_data, epochs=params['epochs'],
-                        batch_size=sample_data.shape[0] // params['batch_size'], lr=params['lr'])
+                        batch_size=params['batch_size'], lr=params['lr'])
     logging.debug(f"Training finished. Final loss: {float(loss):.3f}")
 
     # Set the model to eval mode
@@ -102,7 +102,7 @@ if __name__ == '__main__':
         "epochs": 1,
         "ae_depth": 2,  # Value in paper: 2
         "width_multiplier": 2,  # Value in paper: 2
-        "batch_size": [1_000, 2_000],  # Optimized through bayesian optimization
+        "batch_size": 16,
         "lr": 1e-4,
         "code_size": [1, 3],  # Optimized through bayesian optimization
         "binning_strategy": "POST_BINNING",  # "NONE", "POST_BINNING", "BIN_DIFFERENCE",
@@ -124,13 +124,14 @@ if __name__ == '__main__':
     today = datetime.now().strftime("%d_%m_%Y__%HH_%MM_%SS")
 
     # __________ Bayesian optimization run __________
-    logging.info("Starting Bayesian Optimization, fine-tuning code size and batch size\n")
-    best_params = minimize_comp_ratio(compression_pipeline, params)['params']
+    # logging.info("Starting Bayesian Optimization, fine-tuning code size and batch size\n")
+    # best_params = minimize_comp_ratio(compression_pipeline, params)['params']
 
     # __________ Best parameters run __________
     logging.info("Creating final compressed file with the so far best parameters")
-    for par, val in best_params.items():
-        params[par] = int(val)  # Set the best parameters we found as the best parameters
+    # for par, val in best_params.items():
+    #     params[par] = int(val)  # Set the best parameters we found as the best parameters
+    params['code_size'] = 1
     params['sample_max_size'] = math.inf
     comp_ratio, _ = compression_pipeline(params)
     logging.info(f"Finished. Final compression ratio: {(comp_ratio * 100):.2f}%")

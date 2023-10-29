@@ -1,5 +1,8 @@
 # DeepSqueeze
 
+Note: This is a fork from the MikeXydas (https://www.github.com/MikeXydas) implementation of the DeepSqueeze paper. 
+Following is the README by the original author.
+
 In this repo I attempt to reproduce the compression utility described in *[DeepSqueeze: Deep Semantic Compression for
 Tabular Data](https://cs.brown.edu/people/acrotty/pubs/3318464.3389734.pdf)* by *Amir Ilkhechi, Andrew Crotty,
  Alex Galakatos, Yicong Mao, Grace Fan, Xiran Shi, Ugur Cetintemel* from Brown University.
