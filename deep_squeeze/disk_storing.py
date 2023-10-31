@@ -53,6 +53,9 @@ def store_on_disk(path, model, codes, failures, scaler, hyper_params):
 
     logging.info(f"Stored files in {path}.")
 
+    # Delete the temporary folder
+    shutil.rmtree(path)
+
     return path[:-1] + '.zip'
 
 
