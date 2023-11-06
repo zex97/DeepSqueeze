@@ -12,9 +12,10 @@ import zipfile
 import json
 
 from deep_squeeze.autoencoder import AutoEncoder
+from deep_squeeze.categorical_handling import CategoryClassifier
 
 
-def store_on_disk(path, model, codes, failures, scaler, hyper_params):
+def store_on_disk(path, model, codes, failures, scaler, hyper_params, models, c_failures):
     """
     Our goal is to compress a file as much as possible meaning that our final evaluation
     will be the size of the final file.
@@ -37,11 +38,19 @@ def store_on_disk(path, model, codes, failures, scaler, hyper_params):
     # Get the state dict of the model
     torch.save(model.state_dict(), path + "model.pth")
 
+    # Save categorical column models
+    for key in models:
+        torch.save(models[key].state_dict(), path + key + ".pth")
+
     # Store the codes in a parquet file
     parquet_compress(codes, path, name="codes")
 
     # Store the failures in a parquet file
     parquet_compress(failures, path, name="failures")
+
+    # Store categorical failures in a parquet file
+    if c_failures:
+        parquet_compress(np.array(c_failures).T, path, name="c_failures")
 
     # Store the scaler
     joblib.dump(scaler, path + 'scaler.pkl')
@@ -97,7 +106,11 @@ def load_codes_failures(folder_path):
     codes = np.array(pd.read_parquet(f"{folder_path}/codes.parquet"))
     failures = np.array(pd.read_parquet(f"{folder_path}/failures.parquet"))
 
-    return codes, failures
+    c_failures = np.array([])
+    if Path(f"{folder_path}/c_failures.parquet").exists():
+        c_failures = np.array(pd.read_parquet(f"{folder_path}/c_failures.parquet"))
+
+    return codes, failures, c_failures
 
 
 def load_scaler(folder_path):
@@ -114,10 +127,21 @@ def load_files(comp_path):
 
     # Load model, codes, failures and scaler
     ae = load_model(folder_path, ae)
-    codes, failures = load_codes_failures(folder_path)
+    codes, failures, c_failures = load_codes_failures(folder_path)
     scaler = load_scaler(folder_path)
+
+    categorical_columns = []
+    for i, c in enumerate(c_failures.T):
+        model_path = Path(f"{folder_path}/cc{i}.pth")
+        if model_path.exists():
+            m = CategoryClassifier(hyper_params['code_size'], len(hyper_params['cc_encodings'][str(i)]))
+            m.load_state_dict(torch.load(model_path))
+            m.eval()
+            c = np.add(c, torch.argmax(m(torch.from_numpy(codes)), dim=1))
+        c = [hyper_params['cc_encodings'][str(i)][str(int(zi))] for zi in c]
+        categorical_columns.append(c)
 
     # Since we have loaded everything we need, delete the temp folder
     shutil.rmtree(folder_path + "/")
 
-    return ae, codes, failures, scaler, hyper_params['error_threshold']
+    return ae, codes, failures, scaler, hyper_params['error_threshold'], categorical_columns

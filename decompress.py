@@ -19,7 +19,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     comp_file = args.input
 
-    model, codes, failures, scaler, err_thr = load_files(comp_file)
+    model, codes, failures, scaler, err_thr, categorical_columns = load_files(comp_file)
 
     # If a CUDA enabled GPU exists, send both the codes and the model
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -40,5 +40,7 @@ if __name__ == '__main__':
     # Store the final decompressed array as a csv on disk
     print(f">>> Storing table on {comp_file[:-4]}.csv...", end='')
     table_df = pd.DataFrame(np.round(rescaled_arr, 3))
+    if categorical_columns:
+        table_df = pd.concat([pd.DataFrame(np.array(categorical_columns).T), table_df], axis=1)
     table_df.to_csv(f"{comp_file[:-4]}.csv", index=False, header=False)
     print("Done")

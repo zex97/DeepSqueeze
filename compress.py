@@ -1,27 +1,26 @@
+import argparse
+import logging
 import math
+import time
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
-import logging
-import time
 import torch
-import argparse
-
-from datetime import datetime
 
 from deep_squeeze.autoencoder import AutoEncoder
-from deep_squeeze.preprocessing import ds_preprocessing
-from deep_squeeze.train_loop import train
+from deep_squeeze.categorical_handling import CategoryClassifier, train_categorical, materialize_c_failures
+from deep_squeeze.disk_storing import store_on_disk, calculate_compression_ratio
+from deep_squeeze.experiment import repeat_n_times
 from deep_squeeze.materialization import materialize, materialize_with_post_binning, \
     materialize_with_bin_difference
-from deep_squeeze.disk_storing import store_on_disk, calculate_compression_ratio
-from deep_squeeze.experiment import repeat_n_times, display_compression_results, run_full_experiments, \
-    run_scaling_experiment, baseline_compression_ratios
-from deep_squeeze.bayesian_optimizer import minimize_comp_ratio
+from deep_squeeze.preprocessing import ds_preprocessing
+from deep_squeeze.train_loop import train
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s | %(asctime)s | %(message)s',
                     datefmt='%m/%d/%Y %I:%M:%S')
 compression_repeats = 1
+max_categorical_cardinality = 30
 
 
 @repeat_n_times(n=compression_repeats)  # To produce a consistent result we repeat the experiment n times
@@ -46,8 +45,10 @@ def compression_pipeline(params):
 
     # Read and preprocess the data
     logging.debug("Reading and preprocessing data...")
-    raw_table = np.array(pd.read_csv(params['data_path'], header=None))
-    quantized, scaler = ds_preprocessing(raw_table, params['error_threshold'], min_val=0, max_val=1)
+    df = pd.read_csv(params['data_path'], header=None)
+    numeric_data = np.array(df.select_dtypes(include=[np.number]))
+
+    quantized, scaler = ds_preprocessing(numeric_data, params['error_threshold'], min_val=0, max_val=1)
     params['features'] = quantized.shape[1]  # Need to store feature number for decompression
     logging.debug("Done\n")
 
@@ -83,8 +84,13 @@ def compression_pipeline(params):
         raise ValueError("Available binning strategies: \"NONE\", "
                          "\"POST_BINNING\", \"BIN_DIFFERENCE\"")
 
+    logging.info(f"All-zero codes problem: {not np.any(codes)}")
+
+    # Handle categorical columns
+    models, c_failures = handle_categorical(df, codes, device)
+
     # Store the final file on disk
-    comp_path = store_on_disk(params['compression_path'], model, codes, failures, scaler, params)
+    comp_path = store_on_disk(params['compression_path'], model, codes, failures, scaler, params, models, c_failures)
 
     total_time = time.time() - start_time
 
@@ -97,6 +103,33 @@ def compression_pipeline(params):
     return comp_ratio
 
 
+def handle_categorical(df, codes, device):
+    categorical_data = np.array(df.select_dtypes(exclude=[np.number]))
+    if categorical_data.shape[1] == 0:
+        return [], []
+
+    categorical_mapping = {}
+    c_failures = []
+    models = {}
+
+    for i, c in enumerate(categorical_data.T):
+        unique = np.unique(c)
+        string_to_num = dict((v, k) for k, v in enumerate(unique, 0))
+        c = [string_to_num[zi] for zi in c]
+        categorical_mapping[i] = dict((k, v) for k, v in enumerate(unique, 0))
+        if len(unique) < max_categorical_cardinality:
+            cc_model = CategoryClassifier(params['code_size'], len(unique))
+            cc_model = train_categorical(cc_model, device, codes, c, epochs=4)
+            column_failures = materialize_c_failures(cc_model, codes, c, device)
+            c_failures.append(column_failures)
+            models['cc' + str(i)] = cc_model
+        else:
+            c_failures.append(np.array(c))
+
+    params["cc_encodings"] = categorical_mapping
+    return models, c_failures
+
+
 if __name__ == '__main__':
     params = {
         "epochs": 1,
@@ -104,7 +137,7 @@ if __name__ == '__main__':
         "width_multiplier": 2,  # Value in paper: 2
         "batch_size": 16,
         "lr": 1e-4,
-        "code_size": [1, 3],  # Optimized through bayesian optimization
+        "code_size": 2,  # Optimized through bayesian optimization
         "binning_strategy": "POST_BINNING",  # "NONE", "POST_BINNING", "BIN_DIFFERENCE",
         "sample_max_size": 2e5
     }
@@ -131,7 +164,6 @@ if __name__ == '__main__':
     logging.info("Creating final compressed file with the so far best parameters")
     # for par, val in best_params.items():
     #     params[par] = int(val)  # Set the best parameters we found as the best parameters
-    params['code_size'] = 1
     params['sample_max_size'] = math.inf
     comp_ratio, _ = compression_pipeline(params)
     logging.info(f"Finished. Final compression ratio: {(comp_ratio * 100):.2f}%")
